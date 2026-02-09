@@ -691,6 +691,79 @@ async def browse_logs(
     }
 
 
+# ── Endpoints: Analysis dumps ─────────────────────────────────────────────────
+
+@app.get("/v1/dumps")
+async def list_dumps(limit: int = Query(50, ge=1, le=500)):
+    """List analysis dump JSON files.
+
+    Returns:
+        JSON with list of dump filenames and count.
+    """
+    dump_dir = Path(settings.analysis_log_dir)
+    if not dump_dir.exists():
+        return {"files": [], "total": 0}
+
+    files = sorted(
+        [f.name for f in dump_dir.glob("*.json")],
+        reverse=True,
+    )
+    return {"files": files[:limit], "total": len(files)}
+
+
+@app.get("/v1/dumps/{filename}")
+async def get_dump(filename: str):
+    """Get a specific analysis dump by filename.
+
+    Args:
+        filename: JSON filename (e.g. '2026-02-09T18-26-15_48508804.json').
+
+    Returns:
+        Full analysis dump JSON.
+    """
+    dump_path = Path(settings.analysis_log_dir) / filename
+    if not dump_path.exists() or not dump_path.suffix == ".json":
+        raise HTTPException(status_code=404, detail=f"Dump not found: {filename}")
+
+    try:
+        with open(dump_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.delete("/v1/dumps")
+async def clear_dumps(before: Optional[str] = Query(None, description="Delete dumps before this date YYYY-MM-DD")):
+    """Delete analysis dump files.
+
+    Args:
+        before: Optional date filter — delete only dumps before this date.
+            If omitted, deletes ALL dumps.
+
+    Returns:
+        JSON with number of deleted files.
+    """
+    dump_dir = Path(settings.analysis_log_dir)
+    if not dump_dir.exists():
+        return {"deleted": 0}
+
+    deleted = 0
+    for f in dump_dir.glob("*.json"):
+        if before:
+            # Filename starts with date: 2026-02-09T...
+            file_date = f.name[:10]
+            if file_date >= before:
+                continue
+        try:
+            f.unlink()
+            deleted += 1
+        except OSError:
+            pass
+
+    logger.info("Cleared %d analysis dumps%s", deleted, f" (before {before})" if before else "")
+    return {"deleted": deleted}
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
