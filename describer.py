@@ -102,14 +102,60 @@ def describe_pause(pause_label: str, pause_ms: float) -> str:
     return mapping.get(pause_label, "")
 
 
+def describe_emotion(emotion, confidence: float | None = None) -> str:
+    """Describe detected emotion in natural language.
+
+    Handles both categorical labels (str) and dimensional dicts
+    (arousal/valence/dominance).
+
+    Args:
+        emotion: Emotion label string, dimensional dict, or None.
+        confidence: Confidence score (for categorical labels only).
+
+    Returns:
+        Human-readable emotion description, or empty string.
+    """
+    if emotion is None:
+        return ""
+
+    # Dimensional emotion (audeering model)
+    if isinstance(emotion, dict):
+        ar = emotion.get("arousal", 0.5)
+        va = emotion.get("valence", 0.5)
+        if ar > 0.65 and va > 0.55:
+            return "sounds excited"
+        if ar > 0.65 and va < 0.4:
+            return "sounds tense"
+        if ar < 0.35 and va < 0.4:
+            return "sounds sad"
+        if ar < 0.35 and va > 0.55:
+            return "sounds serene"
+        return ""
+
+    # Categorical emotion (string label)
+    if not emotion or emotion == "neutral":
+        return ""
+
+    word = {"happy": "happy", "angry": "angry", "sad": "sad",
+            "fearful": "anxious", "disgusted": "disgusted",
+            "surprised": "surprised"}.get(emotion, emotion)
+    if not word:
+        return ""
+    if confidence and confidence >= 0.7:
+        return f"sounds {word}"
+    elif confidence and confidence >= 0.5:
+        return f"possibly {word}"
+    return ""
+
+
 def describe_segment(segment: dict) -> str:
     """Generate a natural language description of a prosody segment.
 
-    Combines pitch, tempo, intensity, and pause into a single
+    Combines pitch, tempo, intensity, emotion, and pause into a single
     human-readable sentence suitable for LLM context.
 
     Args:
-        segment: Dict from analyzer.analyze_prosody()['segments'][i].
+        segment: Dict from analyzer/worker with prosody + optional emotion fields.
 
     Returns:
         Natural language description string.
@@ -118,9 +164,10 @@ def describe_segment(segment: dict) -> str:
         >>> seg = {"pitch_trend": "rising", "pitch_mean": 200,
         ...        "tempo_label": "fast", "tempo_syllables_sec": 5.5,
         ...        "intensity_label": "loud", "pause_label": "long",
-        ...        "pause_after_ms": 900}
+        ...        "pause_after_ms": 900, "emotion": "happy",
+        ...        "emotion_confidence": 0.85}
         >>> describe_segment(seg)
-        'speaking quickly, mid-range pitch, voice rising, speaking loudly, long pause (900ms)'
+        'speaking quickly, mid-range pitch, voice rising, speaking loudly, sounds happy, long pause (900ms)'
     """
     parts = []
 
@@ -135,6 +182,10 @@ def describe_segment(segment: dict) -> str:
     intensity_desc = describe_intensity(segment.get("intensity_label", "normal"))
     if intensity_desc:
         parts.append(intensity_desc)
+
+    emotion_desc = describe_emotion(segment.get("emotion"))
+    if emotion_desc:
+        parts.append(emotion_desc)
 
     pause_desc = describe_pause(segment.get("pause_label", "none"), segment.get("pause_after_ms", 0))
     if pause_desc:

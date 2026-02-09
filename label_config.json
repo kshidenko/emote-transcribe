@@ -1,0 +1,62 @@
+{
+  "intensity_db": {
+    "whisper": 50,
+    "soft": 60,
+    "normal": 72
+  },
+  "tempo_syl_sec": {
+    "very_slow": 2.5,
+    "slow": 3.5,
+    "normal": 5.0,
+    "fast": 6.5
+  },
+  "pause_ms": {
+    "short": 300,
+    "medium": 700,
+    "long": 1500
+  },
+  "pause_detection": {
+    "silence_threshold_db": -30,
+    "min_silence_sec": 0.20
+  },
+  "verbal_labels": {
+    "whisper": "whispering",
+    "soft+falling": "softly, subdued",
+    "soft": "softly",
+    "loud+rising": "exclaiming",
+    "loud+fast": "energetic",
+    "loud+falling": "assertive",
+    "loud": "loud",
+    "fast+rising": "lively",
+    "fast": "brisk",
+    "slow+falling+long_pause": "thoughtful",
+    "slow+rising": "curious",
+    "slow+falling": "measured",
+    "slow": "unhurried",
+    "rising": "questioning",
+    "falling+long_pause": "trailing off",
+    "falling": "calm",
+    "default": "steady"
+  },
+  "emotion_labels": {
+    "high_arousal+high_valence": "excited",
+    "high_arousal+low_valence": "tense",
+    "low_arousal+low_valence": "sad",
+    "low_arousal+high_valence": "serene",
+    "high_valence": "positive",
+    "low_valence": "negative",
+    "high_arousal": "intense",
+    "low_arousal": "subdued",
+    "default": "neutral"
+  },
+  "emotion_thresholds": {
+    "low": 0.35,
+    "high": 0.65
+  },
+  "resources": {
+    "emotion_idle_timeout_sec": 300,
+    "worker_cpu_threads": 2,
+    "worker_nice": 10,
+    "enrichment_queue_size": 100
+  }
+}

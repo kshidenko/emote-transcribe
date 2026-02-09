@@ -17,6 +17,8 @@ import numpy as np
 from dataclasses import dataclass, asdict
 from typing import Optional
 
+from label_config_loader import cfg
+
 
 @dataclass
 class ProsodySegment:
@@ -92,19 +94,32 @@ def load_audio(file_path: str) -> parselmouth.Sound:
 
 def detect_pauses(
     sound: parselmouth.Sound,
-    min_silence_duration: float = 0.15,
-    silence_threshold: float = -25.0,
+    min_silence_duration: float = None,
+    silence_threshold: float = None,
 ) -> list[dict]:
     """Detect silent pauses in audio using intensity-based VAD.
+
+    Uses a relative threshold from peak intensity. A value of -35 dB means
+    anything quieter than peak - 35 dB is considered silence.  This is more
+    forgiving for whispery or soft speech than the previous -25 dB.
 
     Args:
         sound: Parselmouth Sound object.
         min_silence_duration: Minimum silence duration to count as pause (seconds).
+            Raised to 0.25s to avoid splitting on brief dips.
         silence_threshold: Intensity threshold relative to max (dB).
+            -35 dB keeps whispers/soft speech as speech, not silence.
 
     Returns:
         List of dicts with 'start', 'end', 'duration_ms' for each pause.
     """
+    # Read defaults from config if not provided
+    pd = cfg["pause_detection"]
+    if silence_threshold is None:
+        silence_threshold = pd.get("silence_threshold_db", -30)
+    if min_silence_duration is None:
+        min_silence_duration = pd.get("min_silence_sec", 0.20)
+
     intensity = sound.to_intensity(time_step=0.01)
     times = intensity.xs()
     values = [intensity.get_value(t) for t in times]
@@ -176,7 +191,7 @@ def compute_pitch_trend(pitch_values: list[float]) -> str:
 
 
 def classify_intensity(db: float) -> str:
-    """Classify intensity level into human-readable label.
+    """Classify intensity level using thresholds from label_config.json.
 
     Args:
         db: Intensity in decibels.
@@ -184,40 +199,39 @@ def classify_intensity(db: float) -> str:
     Returns:
         One of 'whisper', 'soft', 'normal', 'loud'.
     """
-    if db < 45:
+    t = cfg["intensity_db"]
+    if db < t.get("whisper", 50):
         return "whisper"
-    elif db < 55:
+    elif db < t.get("soft", 60):
         return "soft"
-    elif db < 70:
+    elif db < t.get("normal", 72):
         return "normal"
     return "loud"
 
 
 def classify_tempo(syllables_per_sec: float) -> str:
-    """Classify speaking tempo into human-readable label.
+    """Classify speaking tempo using thresholds from label_config.json.
 
     Args:
         syllables_per_sec: Estimated syllable rate.
 
     Returns:
         One of 'very_slow', 'slow', 'normal', 'fast', 'very_fast'.
-
-    Notes:
-        Average conversational speech is ~4-5 syllables/sec for Russian.
     """
-    if syllables_per_sec < 2.5:
+    t = cfg["tempo_syl_sec"]
+    if syllables_per_sec < t.get("very_slow", 2.5):
         return "very_slow"
-    elif syllables_per_sec < 3.5:
+    elif syllables_per_sec < t.get("slow", 3.5):
         return "slow"
-    elif syllables_per_sec < 5.0:
+    elif syllables_per_sec < t.get("normal", 5.0):
         return "normal"
-    elif syllables_per_sec < 6.5:
+    elif syllables_per_sec < t.get("fast", 6.5):
         return "fast"
     return "very_fast"
 
 
 def classify_pause(ms: float) -> str:
-    """Classify pause duration into human-readable label.
+    """Classify pause duration using thresholds from label_config.json.
 
     Args:
         ms: Pause duration in milliseconds.
@@ -225,13 +239,14 @@ def classify_pause(ms: float) -> str:
     Returns:
         One of 'none', 'short', 'medium', 'long', 'very_long'.
     """
+    t = cfg["pause_ms"]
     if ms < 100:
         return "none"
-    elif ms < 300:
+    elif ms < t.get("short", 300):
         return "short"
-    elif ms < 700:
+    elif ms < t.get("medium", 700):
         return "medium"
-    elif ms < 1500:
+    elif ms < t.get("long", 1500):
         return "long"
     return "very_long"
 
@@ -241,10 +256,12 @@ def estimate_syllable_rate(
     start: float,
     end: float,
 ) -> float:
-    """Estimate syllable rate using intensity peaks (nuclei detection).
+    """Estimate syllable rate using smoothed intensity peaks (nuclei detection).
 
-    Uses a simplified version of the de Jong & Wempe (2009) approach:
-    count intensity peaks above a threshold as syllable nuclei.
+    Improved de Jong & Wempe (2009) approach with:
+    - Moving-average smoothing to suppress micro-fluctuations
+    - Minimum 100 ms inter-peak distance (physical syllable limit)
+    - Threshold at mean + 0.3 * std to reject noise peaks
 
     Args:
         sound: Parselmouth Sound object.
@@ -253,9 +270,13 @@ def estimate_syllable_rate(
 
     Returns:
         Estimated syllables per second.
+
+    Notes:
+        Average conversational Russian speech is ~4-5 syllables/sec.
+        Fast speech tops out around 7-8 syllables/sec.
     """
     duration = end - start
-    if duration < 0.1:
+    if duration < 0.2:
         return 0.0
 
     segment = sound.extract_part(from_time=start, to_time=end)
@@ -266,15 +287,31 @@ def estimate_syllable_rate(
     # Replace NaN with 0
     values = np.nan_to_num(values, nan=0.0)
 
-    if len(values) < 3:
+    if len(values) < 5:
         return 0.0
 
-    # Find peaks (local maxima above mean)
-    mean_val = np.mean(values)
+    # Smooth with moving average (window ~50ms = 5 frames at 10ms step)
+    kernel_size = 5
+    kernel = np.ones(kernel_size) / kernel_size
+    smoothed = np.convolve(values, kernel, mode="same")
+
+    # Threshold: mean + 0.3 * std (reject weak peaks)
+    threshold = np.mean(smoothed) + 0.3 * np.std(smoothed)
+
+    # Find peaks with minimum inter-peak distance of 100ms (10 frames)
+    min_distance = 10  # frames (= 100ms at 10ms step)
     peak_count = 0
-    for i in range(1, len(values) - 1):
-        if values[i] > values[i - 1] and values[i] > values[i + 1] and values[i] > mean_val:
+    last_peak_idx = -min_distance  # allow first peak
+
+    for i in range(1, len(smoothed) - 1):
+        if (
+            smoothed[i] > smoothed[i - 1]
+            and smoothed[i] > smoothed[i + 1]
+            and smoothed[i] > threshold
+            and (i - last_peak_idx) >= min_distance
+        ):
             peak_count += 1
+            last_peak_idx = i
 
     return round(peak_count / duration, 2) if duration > 0 else 0.0
 

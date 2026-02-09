@@ -23,11 +23,12 @@ env/
 .DS_Store
 Thumbs.db
 
-# Models (large files)
+# Models (large files, downloaded at runtime)
 models/
 *.bin
 *.pt
 *.onnx
+*.safetensors
 
 # Temp audio files
 tmp/
@@ -35,9 +36,12 @@ tmp/
 *.ogg
 *.mp3
 
-# Logs
+# Annotated transcript logs
 logs/
-*.log
 
 # Environment
 .env
+.env.*
+
+# Misc
+*.log
