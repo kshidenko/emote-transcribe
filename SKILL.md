@@ -59,13 +59,85 @@ Key sections:
 - `emotion_thresholds` — what counts as "low" and "high" for A/V/D
 - `resources` — idle timeout, CPU threads, priority
 
-## Agent Pipeline: Prosody Calibration via TTS
+## Agent Pipeline 1: Emotional Context Analysis
 
-This is a multi-step agent workflow for calibrating and understanding prosody detection. The goal is NOT perfect replication — it's understanding the general rhythm, pauses, pitch changes, loudness, and tempo.
+This is the primary agent workflow — analyzing how user emotions evolve during a conversation by combining dialogue history with voice prosody data.
 
-### Step 1: Analyze a Speech Segment
+### Overview
 
-Pick a segment from the analysis log, e.g.:
+```
+Dialogue history (OpenClaw/Telegram) → understand context → predict expected emotion
+                                                              ↓
+Analysis dumps (emote-transcribe)    → actual voice data   → compare
+                                                              ↓
+                                                       emotional dynamics
+```
+
+### Step 1: Get Dialogue Context
+
+From the conversation system (OpenClaw, Telegram, etc.), retrieve the message chain around the target voice message:
+- What did the assistant say before?
+- What was the user replying to?
+- What is the topic / emotional context?
+
+### Step 2: Predict Expected Emotion
+
+Based on dialogue context, hypothesize what the user should be feeling:
+- Did the assistant give good or bad news?
+- Is the user asking a question, making a statement, reacting?
+- Previous messages: was the user getting frustrated? excited? bored?
+
+### Step 3: Fetch Voice Analysis
+
+Get the analysis dump for that voice message:
+```bash
+# By approximate time (no need for exact match)
+curl "http://localhost:8200/v1/dumps/nearest?t=2026-02-09T18:26"
+```
+
+### Step 4: Compare Predicted vs Actual
+
+Look at the segments:
+- `auto_label` (prosody) — how they actually spoke (exclaiming, thoughtful, etc.)
+- `emotion` (A/V/D) — acoustic emotion dimensions
+- `emotion_label` — model's emotion classification
+
+Compare with your prediction:
+- Did you expect "excited" but voice says "subdued"? Maybe the user is disappointed.
+- Did you expect "neutral" but voice says "tense"? Maybe there's hidden frustration.
+- Does prosody match the words? "I'm fine" spoken with low arousal + low valence = not actually fine.
+
+### Step 5: Analyze Chains (Question → Answer → Reaction)
+
+Track emotional dynamics across message pairs:
+
+```
+[Assistant] "Your request was denied."     → predict: user will be frustrated
+[User voice] auto_label=assertive, A:0.7   → confirmed: high arousal, low valence
+[Assistant] "Let me try another approach."  → predict: user calming down
+[User voice] auto_label=calm, A:0.3        → confirmed: arousal dropped
+```
+
+Key patterns to detect:
+- **Escalation**: arousal increasing over consecutive messages → user getting frustrated
+- **De-escalation**: arousal decreasing → assistant calming the user
+- **Mismatch**: words say "okay" but voice says "tense" → user is not actually okay
+- **Engagement**: high arousal + high valence → user is interested/excited
+
+### Step 6: Adjust Assistant Behavior
+
+Based on emotional dynamics:
+- If user is escalating → assistant should slow down, acknowledge, be empathetic
+- If user is de-escalating → maintain current tone
+- If mismatch detected → probe deeper ("Are you sure? You sound uncertain")
+- If engagement high → build on the momentum
+
+## Agent Pipeline 2: Prosody Calibration via TTS
+
+Secondary workflow — calibrating TTS output to match natural speech patterns. Goal is NOT exact replication, but understanding the general rhythm, pauses, pitch changes, loudness, and tempo.
+
+### Step 1: Pick a Segment from Analysis
+
 ```json
 {
   "text": "Но очень странное.",
@@ -75,63 +147,32 @@ Pick a segment from the analysis log, e.g.:
 }
 ```
 
-### Step 2: Understand the Context
+### Step 2: Reproduce with TTS Tags
 
-Look at the full transcript and surrounding segments. What emotion should the user be feeling at this point? Consider:
-- What was said before and after?
-- What is the topic?
-- Does the prosody match the expected emotion?
-
-### Step 3: Hypothesize Expected Prosody
-
-Based on context, predict what the speech should sound like:
-- "thoughtful" matches — the user is reflecting on something strange
-- Slow pace + falling pitch + long pause = contemplation
-- Low arousal + mid valence = calm but slightly negative
-
-### Step 4: Reproduce with TTS Tags
-
-Use TTS tags (ElevenLabs v3, OpenAI, etc.) to try reproducing the speaking style:
 ```
 <prosody rate="slow" pitch="-10%">Но очень странное.</prosody>
 <break time="1670ms"/>
 ```
 
-Or with ElevenLabs voice tags:
-```
-[thoughtful, slow pace, falling intonation] Но очень странное.
-```
+### Step 3: Send TTS Output Back Through Service
 
-### Step 5: Analyze the TTS Output
-
-Send the generated audio back through Emote-Transcribe:
 ```bash
 curl -X POST http://localhost:8200/v1/audio/transcriptions \
   -F "file=@tts_output.wav" -F "language=ru"
 ```
 
-### Step 6: Compare
+### Step 4: Compare — Focus On
 
-Compare the original and TTS analysis:
-- Do the prosody labels roughly match? (tempo, intensity, pitch_trend)
-- Are pauses in the right places?
-- Is the overall rhythm similar?
-- Are the A/V/D emotion dimensions in the same range?
-
-Do NOT aim for exact match. Focus on:
 - General tempo (slow vs fast)
 - Pause placement and duration
 - Pitch direction (rising vs falling vs flat)
 - Loudness pattern (loud vs soft vs normal)
 
-### Step 7: Iterate
+Do NOT aim for exact numbers. Match the general pattern.
 
-If the TTS output doesn't match:
-1. Adjust TTS tags (more/less pitch variation, different rate)
-2. Re-send through the service
-3. Compare again
+### Step 5: Iterate
 
-This builds understanding of which TTS tags produce which prosody patterns. Over time, the agent learns the mapping between TTS controls and prosody metrics.
+Adjust TTS tags → re-send → compare → repeat. This builds a mapping between TTS controls and prosody metrics.
 
 ## Mode Switching
 

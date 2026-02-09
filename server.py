@@ -315,6 +315,7 @@ async def transcription_proxy(
     model: str = Form("whisper-large-v3-turbo"),
     language: str = Form(""),
     response_format: str = Form("text"),
+    timestamp: Optional[str] = Form(None),
     x_stt_backend: Optional[str] = Header(None, alias="X-STT-Backend"),
     backend: Optional[str] = Query(None),
 ):
@@ -429,6 +430,7 @@ async def transcription_proxy(
                 language=language,
                 audio_duration_sec=audio_duration,
                 whisper_segments=whisper_segments,
+                external_timestamp=timestamp,
             )
         except asyncio.QueueFull:
             logger.warning("Enrichment queue full — skipping enrichment for this request")

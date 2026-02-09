@@ -155,6 +155,7 @@ async def enqueue_job(
     language: str = "ru",
     audio_duration_sec: float = 0.0,
     whisper_segments: list[dict] | None = None,
+    external_timestamp: str | None = None,
 ) -> str:
     """Create and enqueue an enrichment job.
 
@@ -164,6 +165,8 @@ async def enqueue_job(
         language: Language code.
         audio_duration_sec: Duration of audio in seconds.
         whisper_segments: Whisper verbose_json segments with timestamps.
+        external_timestamp: Optional timestamp from client (e.g. Telegram message time).
+            If provided, used as the primary timestamp for searching/matching.
 
     Returns:
         Job ID string.
@@ -172,7 +175,7 @@ async def enqueue_job(
         asyncio.QueueFull: If the enrichment queue is at capacity.
     """
     job_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat()
+    now = external_timestamp or datetime.now(timezone.utc).isoformat()
 
     job = EnrichmentJob(
         job_id=job_id,
