@@ -135,16 +135,34 @@ This builds understanding of which TTS tags produce which prosody patterns. Over
 
 ## Mode Switching
 
+Two ways — via API or via config file:
+
+### Via API
 ```bash
-# Full analysis (prosody + emotion)
 curl -X POST http://localhost:8200/v1/mode -d '{"mode": "full"}'
-
-# Prosody only (no emotion model, saves ~800MB RAM)
 curl -X POST http://localhost:8200/v1/mode -d '{"mode": "prosody_only"}'
-
-# Pure Whisper proxy (no analysis)
 curl -X POST http://localhost:8200/v1/mode -d '{"mode": "whisper_only"}'
 ```
+
+### Via label_config.json (preferred for agents)
+Edit `label_config.json` — changes apply on the next request:
+```json
+{
+  "mode": "full",
+  "stt_backend": "local",
+  ...
+}
+```
+
+Available modes:
+- `full` — Whisper + Prosody + Emotion (default)
+- `prosody_only` — Whisper + Prosody, no emotion model (~800MB RAM saved)
+- `whisper_only` — Pure Whisper proxy, no enrichment
+
+Available backends:
+- `local` — whisper-cpp on port 8178
+- `openai` — OpenAI Whisper API
+- `auto` — local with OpenAI fallback
 
 ## Health Check
 

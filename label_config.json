@@ -1,4 +1,6 @@
 {
+  "mode": "full",
+  "stt_backend": "local",
   "intensity_db": {
     "whisper": 50,
     "soft": 60,

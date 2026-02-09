@@ -615,7 +615,6 @@ async def _process_job(job: EnrichmentJob) -> None:
         job: The enrichment job to process.
     """
     t0 = time.perf_counter()
-    current_mode = settings.mode.value
 
     # Mark as processing
     store_result(EnrichmentResult(
@@ -632,6 +631,34 @@ async def _process_job(job: EnrichmentJob) -> None:
     try:
         # Hot-reload config (picks up JSON changes without restart)
         cfg.reload()
+
+        # Apply mode/backend from config if changed
+        cfg_mode = cfg.get("mode")
+        if cfg_mode and cfg_mode != settings.mode.value:
+            try:
+                new_mode = Mode(cfg_mode)
+                logger.info("Mode changed via config: %s → %s", settings.mode.value, new_mode.value)
+                settings.mode = new_mode
+            except ValueError:
+                pass
+
+        from config import STTBackend
+        cfg_backend = cfg.get("stt_backend")
+        if cfg_backend and cfg_backend != settings.stt_backend.value:
+            try:
+                settings.stt_backend = STTBackend(cfg_backend)
+                logger.info("STT backend changed via config: %s", cfg_backend)
+            except ValueError:
+                pass
+
+        # Load/unload emotion model based on mode
+        from emotion import emotion_manager as _em
+        if settings.needs_emotion and not _em.is_loaded:
+            _em.load()
+        elif not settings.needs_emotion and _em.is_loaded:
+            _em.unload()
+
+        current_mode = settings.mode.value
 
         # Run prosody analysis
         prosody = await loop.run_in_executor(_executor, _run_prosody, job.audio_path)
