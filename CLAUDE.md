@@ -91,7 +91,7 @@ One JSON file per voice message with full structured data per segment:
 ### Environment Variables (config.py)
 ```
 WHISPER_URL=http://127.0.0.1:8178
-OPENAI_API_KEY=sk-...
+OPENAI_API_KEY=                              # Set if using OpenAI backend
 STT_BACKEND=local
 MODE=full
 PORT=8200

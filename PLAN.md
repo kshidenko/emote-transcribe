@@ -145,7 +145,7 @@ Stored in `logs/transcripts/YYYY-MM-DD.jsonl`, one JSON line per voice message:
 ## File Structure
 
 ```
-/Volumes/ExternalOne/git/emote-transcribe/
+emote-transcribe/
   server.py           # FastAPI app: OAI-compatible proxy + async queue
   analyzer.py         # Parselmouth prosody analysis (exists, update)
   describer.py        # Human-readable descriptions (exists, keep)
