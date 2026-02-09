@@ -1,0 +1,5 @@
+fastapi>=0.115.0
+uvicorn>=0.32.0
+parselmouth>=0.4.4
+numpy>=1.26.0
+python-multipart>=0.0.12
