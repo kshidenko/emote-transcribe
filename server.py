@@ -693,22 +693,156 @@ async def browse_logs(
 
 # ── Endpoints: Analysis dumps ─────────────────────────────────────────────────
 
-@app.get("/v1/dumps")
-async def list_dumps(limit: int = Query(50, ge=1, le=500)):
-    """List analysis dump JSON files.
+def _parse_flexible_time(s: str) -> Optional[datetime]:
+    """Parse timestamp in multiple formats — flexible, forgiving.
+
+    Supported: ISO 8601, date only, date+time, unix timestamp.
+    Examples: '2026-02-09', '2026-02-09T18:26', '2026-02-09 18:26:15', '1739125575'.
+
+    Args:
+        s: Time string in any supported format.
 
     Returns:
-        JSON with list of dump filenames and count.
+        datetime object or None if unparsable.
+    """
+    if not s:
+        return None
+    s = s.strip()
+
+    # Unix timestamp (integer or float)
+    try:
+        ts = float(s)
+        if ts > 1e9:  # looks like unix timestamp
+            return datetime.fromtimestamp(ts)
+    except ValueError:
+        pass
+
+    # Try common formats
+    for fmt in (
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M",
+        "%Y-%m-%dT%H",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d",
+        "%Y-%m-%dT%H-%M-%S",  # filename format
+    ):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+
+    return None
+
+
+def _dump_timestamp(filename: str) -> Optional[datetime]:
+    """Extract timestamp from dump filename (2026-02-09T18-26-15_uuid.json).
+
+    Args:
+        filename: Dump filename.
+
+    Returns:
+        datetime or None.
+    """
+    # Filename: 2026-02-09T18-26-15_abcdef01.json
+    ts_part = filename.split("_")[0] if "_" in filename else filename.replace(".json", "")
+    return _parse_flexible_time(ts_part)
+
+
+@app.get("/v1/dumps")
+async def list_dumps(
+    limit: int = Query(50, ge=1, le=500),
+    time_from: Optional[str] = Query(None, alias="from", description="Start time (flexible format)"),
+    time_to: Optional[str] = Query(None, alias="to", description="End time (flexible format)"),
+):
+    """List analysis dump JSON files, optionally filtered by time range.
+
+    Accepts flexible time formats: ISO 8601, date, date+time, unix timestamp.
+
+    Args:
+        limit: Max files to return.
+        time_from: Only dumps after this time.
+        time_to: Only dumps before this time.
+
+    Returns:
+        JSON with list of dump files (filename + timestamp) and count.
+
+    Examples:
+        GET /v1/dumps
+        GET /v1/dumps?from=2026-02-09&to=2026-02-10
+        GET /v1/dumps?from=2026-02-09T18:00&limit=10
     """
     dump_dir = Path(settings.analysis_log_dir)
     if not dump_dir.exists():
         return {"files": [], "total": 0}
 
-    files = sorted(
-        [f.name for f in dump_dir.glob("*.json")],
-        reverse=True,
-    )
-    return {"files": files[:limit], "total": len(files)}
+    dt_from = _parse_flexible_time(time_from) if time_from else None
+    dt_to = _parse_flexible_time(time_to) if time_to else None
+
+    results = []
+    for f in sorted(dump_dir.glob("*.json"), reverse=True):
+        dt = _dump_timestamp(f.name)
+        if dt_from and dt and dt < dt_from:
+            continue
+        if dt_to and dt and dt > dt_to:
+            continue
+        results.append({
+            "filename": f.name,
+            "timestamp": dt.isoformat() if dt else None,
+        })
+
+    total = len(results)
+    return {"files": results[:limit], "total": total}
+
+
+@app.get("/v1/dumps/nearest")
+async def get_nearest_dump(t: str = Query(..., description="Target timestamp (flexible format)")):
+    """Get the analysis dump closest to the given timestamp.
+
+    No need to match exactly — returns the nearest file.
+
+    Args:
+        t: Target timestamp in any supported format.
+
+    Returns:
+        Full analysis dump JSON of the nearest file.
+
+    Examples:
+        GET /v1/dumps/nearest?t=2026-02-09T18:26
+        GET /v1/dumps/nearest?t=1739125575
+    """
+    target = _parse_flexible_time(t)
+    if target is None:
+        raise HTTPException(status_code=400, detail=f"Cannot parse timestamp: {t}")
+
+    dump_dir = Path(settings.analysis_log_dir)
+    if not dump_dir.exists():
+        raise HTTPException(status_code=404, detail="No dumps available")
+
+    best_file = None
+    best_delta = float("inf")
+
+    for f in dump_dir.glob("*.json"):
+        dt = _dump_timestamp(f.name)
+        if dt is None:
+            continue
+        delta = abs((dt - target).total_seconds())
+        if delta < best_delta:
+            best_delta = delta
+            best_file = f
+
+    if best_file is None:
+        raise HTTPException(status_code=404, detail="No dumps found")
+
+    try:
+        with open(best_file, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    data["_matched_file"] = best_file.name
+    data["_time_delta_sec"] = round(best_delta, 1)
+    return data
 
 
 @app.get("/v1/dumps/{filename}")
@@ -733,12 +867,14 @@ async def get_dump(filename: str):
 
 
 @app.delete("/v1/dumps")
-async def clear_dumps(before: Optional[str] = Query(None, description="Delete dumps before this date YYYY-MM-DD")):
+async def clear_dumps(
+    before: Optional[str] = Query(None, description="Delete dumps before this time (flexible format)"),
+):
     """Delete analysis dump files.
 
     Args:
-        before: Optional date filter — delete only dumps before this date.
-            If omitted, deletes ALL dumps.
+        before: Optional time filter (flexible format) — delete only
+            dumps before this time. If omitted, deletes ALL.
 
     Returns:
         JSON with number of deleted files.
@@ -747,12 +883,13 @@ async def clear_dumps(before: Optional[str] = Query(None, description="Delete du
     if not dump_dir.exists():
         return {"deleted": 0}
 
+    dt_before = _parse_flexible_time(before) if before else None
+
     deleted = 0
     for f in dump_dir.glob("*.json"):
-        if before:
-            # Filename starts with date: 2026-02-09T...
-            file_date = f.name[:10]
-            if file_date >= before:
+        if dt_before:
+            dt = _dump_timestamp(f.name)
+            if dt and dt >= dt_before:
                 continue
         try:
             f.unlink()
