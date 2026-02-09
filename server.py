@@ -602,6 +602,10 @@ async def switch_mode(request: Request):
     settings.mode = new_mode
     logger.info("Mode switched: %s → %s", old_mode.value, new_mode.value)
 
+    # Write back to label_config.json (single source of truth)
+    from label_config_loader import cfg
+    cfg.set("mode", new_mode.value)
+
     # Load/unload emotion model based on new mode
     if settings.needs_emotion and not emotion_manager.is_loaded:
         try:

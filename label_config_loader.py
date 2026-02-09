@@ -59,5 +59,33 @@ class LabelConfig:
         self._ensure_loaded()
         return self._data.get(key, default)
 
+    def set(self, key: str, value: Any) -> None:
+        """Update a top-level key and write back to disk.
+
+        Reads current file, updates the key, writes back — preserves
+        all other fields and formatting.
+
+        Args:
+            key: Top-level config key (e.g. 'mode').
+            value: New value.
+        """
+        self._ensure_loaded()
+        # Read fresh from disk to avoid overwriting concurrent changes
+        try:
+            with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            data = self._data.copy()
+
+        data[key] = value
+        try:
+            with open(_CONFIG_PATH, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+                f.write("\n")
+            self._data = data
+            logger.info("Updated label_config.json: %s = %s", key, value)
+        except OSError as exc:
+            logger.error("Failed to write label_config.json: %s", exc)
+
 
 cfg = LabelConfig()
